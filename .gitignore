@@ -180,3 +180,12 @@ cython_debug/
 
 # Project specific
 chroma_db/
+
+# Local LLM model folders (large files, not for version control)
+qwen2.5-coder-7b-instruct/
+qwen2.5-7b-instruct/
+*.safetensors
+*.safetensors.index.json
+
+# Download helper script (local only)
+download_model.py

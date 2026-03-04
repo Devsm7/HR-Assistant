@@ -40,7 +40,7 @@ def _format_answer(question: str, sql_result: str, provider: BaseProvider) -> st
             {"role": "system", "content": system_msg},
             {"role": "user",   "content": question},
         ],
-        max_tokens=512,
+        max_tokens=256,
         temperature=0.0,
     )
 

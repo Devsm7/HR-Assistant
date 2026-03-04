@@ -133,15 +133,33 @@ class LocalHFProvider(BaseProvider):
             gen_kwargs["do_sample"] = False
 
         result = self._pipe(messages, **gen_kwargs)
-        # pipeline returns list[list[dict]] or list[dict] depending on version
-        output = result[0]
-        if isinstance(output, list):
-            output = output[0]
-        text = output.get("generated_text", "")
-        # If the model returned a list of messages (chat format), take the last content
-        if isinstance(text, list):
-            text = text[-1].get("content", "")
-        return str(text).strip()
+        logger.debug("Local model raw output: %s", result)
+
+        # transformers pipeline returns different shapes depending on version / mode:
+        # - Chat template + return_full_text=False:
+        #     [[{"role": "assistant", "content": "..."}]]
+        # - Plain text: [{"generated_text": "..."}]
+        # - Or:         [{"generated_text": [{...messages...}]}]
+        try:
+            output = result[0]
+            if isinstance(output, list):
+                output = output[0]
+
+            text = output.get("generated_text", "")
+
+            # Chat format: generated_text is a list of message dicts
+            if isinstance(text, list):
+                for msg in reversed(text):
+                    if isinstance(msg, dict) and msg.get("role") == "assistant":
+                        return str(msg.get("content", "")).strip()
+                # Fallback: last item's content
+                return str(text[-1].get("content", "")).strip()
+
+            return str(text).strip()
+
+        except Exception as e:
+            logger.error("Failed to parse local model output: %s | raw: %s", e, result)
+            raise
 
 
 # ── Singleton registry ────────────────────────────────────────────────────────
