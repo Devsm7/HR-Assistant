@@ -2,34 +2,32 @@
 sql_engine.py - Text-to-SQL engine for the HR Assistant.
 
 Two-step pipeline:
-  1. LLM receives the DB schema and generates a SQL SELECT query.
+  1. LLM receives the DB schema (+ optional conversation history) and generates a SQL SELECT query.
   2. SQLite executes the SQL locally and returns the result.
 
-The result is then passed to the orchestrator, which calls the LLM
-again to format it into a natural language answer.
+The result is then passed to the orchestrator, which calls the LLM again
+to format it into a natural language answer.
 """
 
 from __future__ import annotations
 
+import logging
 import re
 import sqlite3
 from pathlib import Path
+from typing import Optional
 
 import pandas as pd
-from huggingface_hub import InferenceClient
-from dotenv import load_dotenv
-import os
+import sqlparse
 
-# ── Config ────────────────────────────────────────────────────────────────────
-_ENV_FILE    = Path(__file__).resolve().parents[2] / ".env"
-load_dotenv(_ENV_FILE)
+from src.chatbot.llm.providers import BaseProvider
+from src.chatbot.llm.prompts import SQL_HISTORY_PREFIX
+from src.chatbot.core.config import config
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DB_PATH      = PROJECT_ROOT / "hr.db"
-TABLE_NAME   = "employees"
-MODEL_ID     = "meta-llama/Meta-Llama-3-8B-Instruct"
+logger = logging.getLogger(__name__)
 
-_client = InferenceClient(model=MODEL_ID, token=os.getenv("HF_TOKEN"))
+# ── Constants ─────────────────────────────────────────────────────────────────
+TABLE_NAME = "employees"
 
 # ── Schema (sent to LLM with every SQL generation request) ───────────────────
 DB_SCHEMA = """
@@ -72,7 +70,7 @@ Columns:
   YearsWithCurrManager       INTEGER
 """
 
-SQL_GEN_SYSTEM = f"""You are an expert SQL assistant for an HR database.
+_SQL_GEN_BASE = f"""You are an expert SQL assistant for an HR database.
 Given a user question, write ONE valid SQLite SELECT query that answers it.
 
 Rules:
@@ -82,40 +80,79 @@ Rules:
 - Return ONLY the SQL query, no explanation, no markdown.
 
 Schema:
-{DB_SCHEMA}
-"""
+{DB_SCHEMA}"""
 
+
+# ── SQL extraction ────────────────────────────────────────────────────────────
 
 def _extract_sql(text: str) -> str:
-    """Extract the SQL query from the LLM output (strip markdown fences if any)."""
-    # Strip ```sql ... ``` fences
+    """Strip markdown fences and return just the SELECT statement."""
     text = re.sub(r"```(?:sql)?", "", text, flags=re.IGNORECASE).strip("`\n ")
-    # Take only up to the first semicolon
     match = re.search(r"(SELECT\b.+?)(?:;|$)", text, re.IGNORECASE | re.DOTALL)
     return match.group(1).strip() if match else text.strip()
 
 
+# ── SQL safety check ──────────────────────────────────────────────────────────
+
 def _is_safe(sql: str) -> bool:
-    """Only allow SELECT statements."""
-    stripped = sql.strip().upper()
-    return stripped.startswith("SELECT") and not any(
-        kw in stripped for kw in ("INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "CREATE")
+    """
+    Accept only a single SELECT statement.
+    Uses sqlparse for reliable statement-type detection.
+    """
+    stmts = sqlparse.parse(sql.strip())
+    if not stmts or len(stmts) != 1:
+        return False
+    if stmts[0].get_type() != "SELECT":
+        return False
+    # Belt-and-suspenders: reject dangerous keywords anywhere in the text
+    dangerous = (
+        "INSERT", "UPDATE", "DELETE", "DROP", "ALTER",
+        "CREATE", "TRUNCATE", "EXEC", "EXECUTE",
     )
+    return not any(kw in sql.upper() for kw in dangerous)
 
 
-def generate_sql(question: str) -> str:
-    """Ask the LLM to generate a SQL query for the given question."""
-    response = _client.chat_completion(
+# ── SQL generation ────────────────────────────────────────────────────────────
+
+def generate_sql(
+    question: str,
+    provider: BaseProvider,
+    history_msgs: Optional[list[dict]] = None,
+) -> str:
+    """
+    Ask the LLM to generate a SQL SELECT query for the given question.
+
+    Args:
+        question:     The current user question.
+        provider:     LLM backend (Groq or local).
+        history_msgs: Prior conversation turns as [{"role":..., "content":...}] dicts.
+                      Used to resolve follow-up references ("those employees", "same dept").
+    """
+    system_content = _SQL_GEN_BASE
+
+    # Inject conversation history when available (last 3 turns = 6 messages max)
+    if history_msgs:
+        recent = history_msgs[-6:]
+        history_text = "\n".join(
+            f"{'User' if m['role'] == 'user' else 'Assistant'}: {m['content']}"
+            for m in recent
+        )
+        system_content += SQL_HISTORY_PREFIX.format(history=history_text)
+
+    response = provider.chat_completion(
         messages=[
-            {"role": "system", "content": SQL_GEN_SYSTEM},
+            {"role": "system", "content": system_content},
             {"role": "user",   "content": question},
         ],
         max_tokens=256,
         temperature=0.0,
     )
-    raw = response.choices[0].message.content.strip()
-    return _extract_sql(raw)
+    sql = _extract_sql(response)
+    logger.debug("Generated SQL: %s", sql)
+    return sql
 
+
+# ── SQL execution ─────────────────────────────────────────────────────────────
 
 def execute_sql(sql: str) -> str:
     """
@@ -123,34 +160,41 @@ def execute_sql(sql: str) -> str:
     the result as a formatted string.
     """
     if not _is_safe(sql):
+        logger.warning("Unsafe SQL blocked: %s", sql)
         return "Error: Only SELECT queries are allowed."
 
-    if not DB_PATH.exists():
+    if not config.DB_PATH.exists():
         return (
             "Error: Database not found. "
             "Please run `python -m src.sql.db_setup` first."
         )
 
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(config.DB_PATH)
     try:
         df = pd.read_sql_query(sql, conn)
         if df.empty:
             return "No results found."
-        # Return at most 50 rows to avoid overwhelming the LLM
-        return df.head(50).to_string(index=False)
+        return df.head(config.SQL_MAX_ROWS).to_string(index=False)
     except Exception as e:
+        logger.error("SQL execution error: %s", e)
         return f"SQL Error: {e}"
     finally:
         conn.close()
 
 
-def run(question: str) -> tuple[str, str]:
+# ── Full pipeline ─────────────────────────────────────────────────────────────
+
+def run(
+    question: str,
+    provider: BaseProvider,
+    history_msgs: Optional[list[dict]] = None,
+) -> tuple[str, str]:
     """
     Full Text-to-SQL pipeline.
 
     Returns:
         (sql, result_str) — the generated SQL and its execution result.
     """
-    sql    = generate_sql(question)
+    sql    = generate_sql(question, provider, history_msgs)
     result = execute_sql(sql)
     return sql, result

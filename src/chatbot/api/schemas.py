@@ -1,18 +1,23 @@
 """
-Pydantic request/response models for API
+Pydantic request/response models for the HR Assistant API.
 """
+
+from typing import Literal, Optional
+
 from pydantic import BaseModel
-from typing import Optional
 
 
 class ChatMessage(BaseModel):
-    message: str
-    session_id: Optional[str] = "default_session"
+    message:    str
+    session_id: Optional[str]                    = "default_session"
+    model:      Literal["groq", "local"]         = "groq"
 
 
 class ChatResponse(BaseModel):
-    response: str
+    response:   str
     session_id: str
+    model:      str
+    sql:        Optional[str] = None             # the SQL query that was executed
 
 
 class ClearHistoryRequest(BaseModel):
@@ -21,5 +26,5 @@ class ClearHistoryRequest(BaseModel):
 
 class VoiceChatResponse(BaseModel):
     transcription: str
-    response: str
-    session_id: str
+    response:      str
+    session_id:    str

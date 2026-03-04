@@ -1,22 +1,35 @@
 """
-Local development server runner
-Run the FastAPI application using uvicorn
-"""
-import uvicorn
-from twuaqirag.core.config import config
+run.py - Start the HR Assistant FastAPI server with uvicorn.
 
+Usage:
+    python src/run.py
+"""
+
+import sys
+from pathlib import Path
+
+# Ensure the project root (parent of src/) is on sys.path so that
+# 'src.chatbot.*' imports resolve correctly when this file is run directly.
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
+import uvicorn
+
+from src.chatbot.core.config import config
 
 if __name__ == "__main__":
-    print("🚀 Starting Twuaiq RAG Assistant FastAPI Server...")
-    print(f"🌐 The interface will be available at: http://localhost:{config.API_PORT}")
-    print(f"📱 API documentation at: http://localhost:{config.API_PORT}/docs")
-    print("\n⏹️  Press Ctrl+C to stop the server")
-    print("=" * 60)
-    
+    print("=" * 55)
+    print("  HR Assistant  -  starting FastAPI server")
+    print(f"  UI  : http://localhost:{config.API_PORT}")
+    print(f"  Docs: http://localhost:{config.API_PORT}/docs")
+    print("  Press Ctrl+C to stop")
+    print("=" * 55)
+
     uvicorn.run(
-        "twuaqirag.api.main:app",
+        "src.chatbot.api.main:app",
         host=config.API_HOST,
         port=config.API_PORT,
-        reload=True,  # Enable auto-reload for development
-        log_level="info"
+        reload=False,
+        log_level="info",
     )

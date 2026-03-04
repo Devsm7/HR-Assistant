@@ -1,7 +1,10 @@
 """
 prompts.py - LLM prompts for the HR Assistant Text-to-SQL pipeline.
 
-ANSWER_PROMPT: formats SQL query results into a natural language response.
+ANSWER_PROMPT    : formats SQL query results into a natural language response.
+SQL_HISTORY_PREFIX: injected into the SQL generation system prompt when prior
+                   conversation history is available, enabling multi-turn queries
+                   like "how many of THOSE employees work overtime?".
 """
 
 ANSWER_PROMPT = """You are an HR Assistant that reports data EXACTLY as given.
@@ -23,4 +26,15 @@ CRITICAL RULES:
 </result>
 
 User Question: {question}
+"""
+
+# ── Multi-turn SQL history prefix ─────────────────────────────────────────────
+
+SQL_HISTORY_PREFIX = """
+For context, here is the recent conversation so far (use it to resolve pronouns and references
+like "those employees", "same department", "how many of them", etc.):
+
+{history}
+
+Now answer the NEW question below using a single SQLite SELECT query.
 """

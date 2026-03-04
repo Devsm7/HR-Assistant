@@ -6,20 +6,39 @@ Run with:
     python app.py
 """
 
-from src.rag.rag.memory import store
-from src.rag.rag.prompts import ANSWER_PROMPT
+import asyncio
+
+from src.chatbot.llm.orchestrator import generate_response
+from src.chatbot.llm.providers import ModelChoice
 from src.sql.sql_engine import run as sql_run
-from src.rag.rag.orchestrator import generate_response
+
 
 SESSION_ID = "terminal-session"
-DEBUG = True   # set to False to hide SQL debug output
+DEBUG      = True   # set to False to hide SQL debug output
 
 
-def main():
+def _pick_model() -> ModelChoice:
+    """Ask the user which model to use for the session."""
+    print("\nSelect model:")
+    print("  [g] Groq  — llama-3.3-70b-versatile (fast, cloud)")
+    print("  [l] Local — Qwen/Qwen2.5-7B-Instruct (downloaded, runs on device)")
+    while True:
+        choice = input("Choice [g/l]: ").strip().lower()
+        if choice in ("g", "groq", ""):
+            return ModelChoice.GROQ
+        if choice in ("l", "local"):
+            return ModelChoice.LOCAL
+        print("  Please enter 'g' for Groq or 'l' for Local.")
+
+
+def main() -> None:
     print("\n" + "=" * 55)
     print("  HR Assistant  -  Ask me anything about employees")
     print("  Type 'exit' or 'quit' to stop")
-    print("=" * 55 + "\n")
+    print("=" * 55)
+
+    model_choice = _pick_model()
+    print(f"\nUsing model: {model_choice.value}\n")
 
     while True:
         try:
@@ -35,16 +54,18 @@ def main():
             print("Goodbye!")
             break
 
-        if DEBUG:
-            # Show the SQL and raw result before the LLM formats it
-            sql, result = sql_run(user_input)
-            print(f"\n[DEBUG] SQL  : {sql}")
-            print(f"[DEBUG] Result:\n{result}\n")
+        try:
+            answer, sql = asyncio.run(
+                generate_response(user_input, session_id=SESSION_ID, model_choice=model_choice)
+            )
+        except Exception as exc:
+            print(f"Error: {exc}")
+            continue
 
-        print("Assistant: ", end="", flush=True)
-        answer = generate_response(user_input, session_id=SESSION_ID)
-        print(answer)
-        print()
+        if DEBUG:
+            print(f"\n[DEBUG] SQL: {sql}\n")
+
+        print(f"Assistant: {answer}\n")
 
 
 if __name__ == "__main__":
