@@ -1,15 +1,30 @@
 # HR Assistant - Python dependencies
 # Install with: pip install -r requirements.txt
 
+# --- Web server ---
 fastapi>=0.110
 uvicorn[standard]>=0.29
 pydantic>=2.0
 python-dotenv>=1.0
+
+# --- LLM / Cloud ---
 groq>=1.0
-transformers>=4.40
-torch>=2.1
+tenacity>=8.0
+
+# --- Local model (HuggingFace) ---
+transformers>=4.44
 accelerate>=0.30
 huggingface-hub>=0.22
+# NOTE: torch is NOT installed from PyPI here.
+# For CPU:          pip install torch
+# For GPU (RTX 30/40xx, CUDA 12.6):
+#                   pip install torch --index-url https://download.pytorch.org/whl/cu126
+# For GPU (RTX 50xx / Blackwell, CUDA 12.8):
+#                   pip install --pre torch --index-url https://download.pytorch.org/whl/nightly/cu128
+
+# --- Data / SQL ---
 pandas>=2.0
 sqlparse>=0.5
-tenacity>=8.0
+
+# --- Notebooks ---
+matplotlib>=3.8
